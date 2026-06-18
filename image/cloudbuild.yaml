@@ -157,9 +157,19 @@ steps:
       - "-c"
       - |
         set -ex
+        case "$${IMAGE_ENV}" in
+          debug|hardened) ;;
+          *)
+            echo "ERROR: Invalid IMAGE_ENV: '$${IMAGE_ENV}'. Must be 'debug' or 'hardened'." >&2
+            exit 1
+            ;;
+        esac
+
         COMMON_COMMANDS=(
           # Disabled for cchost base image: Entrypoint is handled directly by systemd, not Cloud-Init.
           # "s|cros_efi|cros_efi ds=nocloud;s=/usr/share/oem/|g"
+          "s|[[:space:]]confidential-space\.hardened=[^[:space:]]*||g"
+          "s|[[:space:]]ima_appraise=[^[:space:]]*||g"
           "s|cros_efi|cros_efi cos.protected_stateful_partition=m|g"
           "s|cros_efi|cros_efi systemd.default_timeout_start_sec=900s|g"
           "s|cros_efi|cros_efi swiotlb=4194304,force,any|g"
@@ -171,7 +181,9 @@ steps:
         DEBUG_COMMANDS=(
           "s|cros_efi|cros_efi systemd.mask=konlet-startup.service|g"
           "s|cros_efi|cros_efi systemd.mask=update-engine.service|g"
-          "s|cros_efi|cros_efi confidential-space.hardened=false|g"
+          "s|cros_efi|cros_efi confidential-space.hardened=false|"
+          "s|cros_efi|cros_efi ima_appraise=log|"
+          "s|cros_efi|cros_efi systemd.mask=google-guest-agent.service|g"
           "s|cros_efi|cros_efi systemd.mask=gcr-wait-online.service|g"
           "s|cros_efi|cros_efi systemd.mask=systemd-networkd-wait-online.service|g"
           "s|cros_efi|cros_efi systemd.mask=cloud-init.service|g"
@@ -209,7 +221,8 @@ steps:
           "s|cros_efi|cros_efi systemd.mask=sshd.service|g"
           "s|cros_efi|cros_efi systemd.mask=var-lib-toolbox.mount|g"
           "s|cros_efi|cros_efi systemd.mask=update-engine.service|g"
-          "s|cros_efi|cros_efi confidential-space.hardened=true|g"
+          "s|cros_efi|cros_efi confidential-space.hardened=true|"
+          "s|cros_efi|cros_efi ima_appraise=enforce|"
         )
 
         CMD=(
