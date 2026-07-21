@@ -36,6 +36,12 @@ main() {
   mkdir /tmp/container_launcher
   chmod +rw /tmp/container_launcher
 
+  # Configure static IP for tap device using systemd-networkd.
+  if [[ -f /usr/share/oem/kps/network_setup.sh ]]; then
+    /usr/share/oem/kps/network_setup.sh
+    systemctl restart systemd-networkd
+  fi
+
   # Allow incoming TCP packets on port 50050 for KPS and 50051 for attestation service.
   iptables -C INPUT -d 192.168.100.3 -p tcp -m multiport --dports 50050,50051 -j ACCEPT 2>/dev/null || \
   iptables -I INPUT 1 -d 192.168.100.3 -p tcp -m multiport --dports 50050,50051 -j ACCEPT
@@ -44,11 +50,6 @@ main() {
   if grep -q "confidential-space.hardened=false" /proc/cmdline; then
     echo "=== Running debug VM configurations ==="
 
-    # Configure static IP for tap device using systemd-networkd.
-    if [[ -f /usr/share/oem/kps/network_setup.sh ]]; then
-      /usr/share/oem/kps/network_setup.sh
-      systemctl restart systemd-networkd
-    fi
 
     # Load the QEMU fw_cfg kernel module
     modprobe qemu_fw_cfg 2>/dev/null || true
@@ -85,8 +86,7 @@ main() {
           iptables -N KPM_DEBUG_SSH 2>/dev/null || true
           iptables -F KPM_DEBUG_SSH
           iptables -A KPM_DEBUG_SSH -s 192.168.100.2/32 -j ACCEPT
-          iptables -A KPM_DEBUG_SSH -s 192.168.100.1/32 -j ACCEPT
-          iptables -A KPM_DEBUG_SSH -j DROP
+                    iptables -A KPM_DEBUG_SSH -j DROP
           iptables -C INPUT -d 192.168.100.3/32 -p tcp --dport 22 -j KPM_DEBUG_SSH 2>/dev/null || \
             iptables -I INPUT 1 -d 192.168.100.3/32 -p tcp --dport 22 -j KPM_DEBUG_SSH
           echo "Successfully imported debug SSH authorized_keys from fw_cfg"
