@@ -13,6 +13,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+is_debug_mode() {
+  grep -qw "confidential-space.hardened=false" /proc/cmdline 2>/dev/null
+}
+
+setup_debug_ssh() {
+  is_debug_mode || return 0
+  echo "=== Running debug VM configurations ==="
+
+  modprobe qemu_fw_cfg 2>/dev/null || true
+
+  local fwcfg="/sys/firmware/qemu_fw_cfg/by_name/opt/kpm_debug_ssh"
+  if ! grep -qx "kpm_debug_ssh_v1" "${fwcfg}/kpm_debug_ssh_v1/raw" 2>/dev/null; then
+    echo "Failed to find or validate debug SSH keys in fw_cfg"
+    return 0
+  fi
+
+  local keys_size=$(cat "${fwcfg}/authorized_keys/size" 2>/dev/null || echo 0)
+  if [[ ! -r "${fwcfg}/authorized_keys/raw" || "$keys_size" -eq 0 ]]; then
+    echo "Failed to find or validate debug SSH keys in fw_cfg"
+    return 0
+  fi
+
+  mkdir -p /run/kpm-debug-ssh && chmod 700 /run/kpm-debug-ssh || return 0
+  install -m 600 "${fwcfg}/authorized_keys/raw" /run/kpm-debug-ssh/authorized_keys || return 0
+  echo "Successfully imported debug SSH authorized_keys from fw_cfg"
+
+  for service in sshd ssh; do
+    mkdir -p "/run/systemd/system/${service}.service.d"
+    printf '[Service]\nExecStart=\nExecStart=/usr/sbin/sshd -D -e -o PermitRootLogin=prohibit-password -o PubkeyAuthentication=yes -o PasswordAuthentication=no -o AuthorizedKeysFile=/run/kpm-debug-ssh/authorized_keys\n' > "/run/systemd/system/${service}.service.d/kpm-debug.conf"
+  done
+  systemctl daemon-reload
+
+  if (timeout 15 systemctl restart sshd.service || timeout 15 systemctl restart ssh.service) 2>/dev/null; then
+    iptables -I INPUT 1 -d 192.168.100.3 -p tcp --dport 22 -s 192.168.100.2/32 -j ACCEPT
+    echo "Debug SSH successfully configured and running."
+  else
+    echo "Warning: failed to start debug sshd"
+  fi
+}
+
 main() {
   # Set IMA policy
   if [[ -f /usr/share/oem/ima-policy ]]; then
@@ -40,7 +80,7 @@ main() {
   fi
 
   # Allow incoming TCP packets on port 50050 for KPS and 50051 for attestation service.
-  iptables -I INPUT -d 192.168.100.3 -p tcp  -m multiport --dports 50050,50051 -j ACCEPT
+  iptables -I INPUT -d 192.168.100.3 -p tcp -m multiport --dports 50050,50051 -j ACCEPT
 
   systemctl daemon-reload
   systemctl enable keymanager.service
@@ -48,6 +88,10 @@ main() {
   systemctl start keymanager.service
   systemctl start attestation.service
 
+  # Optional debug SSH setup
+  setup_debug_ssh
+
+  # Start telemetry
   # Last, so a failing relay cannot stop the KPS from serving keys. Nothing is
   # missed: these units log to journald, and Read_From_Tail=False reads the
   # journal from the beginning.
